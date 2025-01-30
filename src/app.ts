@@ -33,7 +33,6 @@ app.use((req: Request, _: Response, next: NextFunction) => {
         httpError(next, err, req, 404)
     }
 })
-
 // Global Error Handler
 app.use(globalErrorHandler)
 
