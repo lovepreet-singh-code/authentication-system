@@ -1,5 +1,3 @@
- 
- 
 
 import util from 'util';
 import 'winston-mongodb';
