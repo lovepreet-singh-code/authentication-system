@@ -32,3 +32,23 @@ export interface IUser {
     lastLoginAt: Date | null
     consent: boolean
 }
+
+export interface IUserWithId extends IUser {
+    _id: string
+}
+
+export interface IRefreshToken {
+    token: string
+}
+export interface IRegisterUserRequestBody {
+    name: string
+    emailAddress: string
+    phoneNumber: string
+    password: string
+    consent: boolean
+}
+
+export interface ILoginUserRequestBody {
+    emailAddress: string
+    password: string
+}

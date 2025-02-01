@@ -1,11 +1,12 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import {  NextFunction, Request, Response } from 'express'
 import httpResponse from '../util/httpResponse'
 import responseMessage from '../constant/responseMessage'
 import httpError from '../util/httpError'
 import quicker from '../util/quicker'
-import { validateJoiSchema, ValidateRegisterBody } from '../service/validationService'
-import { IRegisterUserRequestBody, IUser } from '../types/userTypes'
+import { validateJoiSchema, ValidateLoginBody, ValidateRegisterBody } from '../service/validationService'
+import { ILoginUserRequestBody, IRefreshToken, IRegisterUserRequestBody, IUser } from '../types/userTypes'
 import databaseService from '../service/databaseService'
 import { EUserRole } from '../constant/userConstant'
 import emailService from '../service/emailService'
@@ -13,6 +14,7 @@ import config from '../config/config'
 import logger from '../util/logger'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
+import { EApplicationEnvironment } from '../constant/application'
 
 dayjs.extend(utc)
 
@@ -26,6 +28,9 @@ interface IConfirmRequest extends Request {
     query: {
         code: string
     }
+}
+interface ILoginRequest extends Request {
+    body: ILoginUserRequestBody
 }
 
 
@@ -135,8 +140,6 @@ register: async (req: Request, res: Response, next: NextFunction) => {
 
            emailService.sendEmail(to, subject, text).catch((err) => {
                logger.error(`EMAIL_SERVICE`, {
-                  
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                   meta: err
               })
          })
@@ -180,12 +183,97 @@ confirmation: async (req: Request, res: Response, next: NextFunction) => {
 
           emailService.sendEmail(to, subject, text).catch((err) => {
               logger.error(`EMAIL_SERVICE`, {
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                   meta: err
               })
           })
+          
 
         httpResponse(req, res, 200, responseMessage.SUCCESS)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+},
+login: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { body } = req as ILoginRequest
+
+        // * Body Validation
+        const { error, value } = validateJoiSchema<IRegisterUserRequestBody>(ValidateLoginBody, body)
+        if (error) {
+            return httpError(next, error, req, 422)
+        }
+
+        const {emailAddress, password} = value
+        // * Find users
+        const user = await databaseService.findUserByEmailAddress(emailAddress, `+password`)
+        if (!user) {
+            return httpError(next, new Error(responseMessage.NOT_FOUND('user')), req, 404)
+        }
+
+         // * Validate Password
+         const isValidPassword = await quicker.comparePassword(password, user.password)
+         if (!isValidPassword) {
+             return httpError(next, new Error(responseMessage.INVALID_EMAIL_OR_PASSWORD), req, 400)
+         }
+        
+         
+            // * Access Token & Refresh Token
+            const accessToken = quicker.generateToken(
+                {
+                    userId: user.id
+                },
+                config.ACCESS_TOKEN.SECRET as string,
+                config.ACCESS_TOKEN.EXPIRY
+            )
+
+            const refreshToken = quicker.generateToken(
+                {
+                    userId: user.id
+                },
+                config.REFRESH_TOKEN.SECRET as string,
+                config.REFRESH_TOKEN.EXPIRY
+            )
+
+         
+            
+               // * Last Login Information
+               user.lastLoginAt = dayjs().utc().toDate()
+               await user.save()
+
+              
+            // * Refresh Token Store
+            const refreshTokenPayload: IRefreshToken = {
+                token: refreshToken
+            }
+
+            await databaseService.createRefreshToken(refreshTokenPayload)
+
+
+             //  * Cookie Send
+            const DOMAIN = quicker.getDomainFromUrl(config.SERVER_URL as string)
+
+            res.cookie('accessToken', accessToken, {
+                path: '/api/v1',
+                domain: DOMAIN,
+                sameSite: 'strict',
+                maxAge: 1000 * config.ACCESS_TOKEN.EXPIRY,
+                httpOnly: true,
+                secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+            }).cookie('refreshToken', refreshToken, {
+                path: '/api/v1',
+                domain: DOMAIN,
+                sameSite: 'strict',
+                maxAge: 1000 * config.REFRESH_TOKEN.EXPIRY,
+                httpOnly: true,
+                secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+            })
+
+
+        httpResponse(req, res, 200, responseMessage.SUCCESS,{
+            refreshToken,
+            accessToken
+        })
+        
     } catch (err) {
         httpError(next, err, req, 500)
     }
