@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+///* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import {  NextFunction, Request, Response } from 'express'
 import httpResponse from '../util/httpResponse'
@@ -31,6 +31,10 @@ interface IConfirmRequest extends Request {
 }
 interface ILoginRequest extends Request {
     body: ILoginUserRequestBody
+}
+
+interface ISelfIdentificationRequest extends Request {
+    authenticatedUser: IUser
 }
 
 
@@ -140,6 +144,7 @@ register: async (req: Request, res: Response, next: NextFunction) => {
 
            emailService.sendEmail(to, subject, text).catch((err) => {
                logger.error(`EMAIL_SERVICE`, {
+                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                   meta: err
               })
          })
@@ -183,6 +188,7 @@ confirmation: async (req: Request, res: Response, next: NextFunction) => {
 
           emailService.sendEmail(to, subject, text).catch((err) => {
               logger.error(`EMAIL_SERVICE`, {
+                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                   meta: err
               })
           })
@@ -220,6 +226,7 @@ login: async (req: Request, res: Response, next: NextFunction) => {
             // * Access Token & Refresh Token
             const accessToken = quicker.generateToken(
                 {
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                     userId: user.id
                 },
                 config.ACCESS_TOKEN.SECRET as string,
@@ -228,6 +235,7 @@ login: async (req: Request, res: Response, next: NextFunction) => {
 
             const refreshToken = quicker.generateToken(
                 {
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                     userId: user.id
                 },
                 config.REFRESH_TOKEN.SECRET as string,
@@ -274,6 +282,14 @@ login: async (req: Request, res: Response, next: NextFunction) => {
             accessToken
         })
         
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+},
+selfIdentification: (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { authenticatedUser } = req as ISelfIdentificationRequest
+        httpResponse(req, res, 200, responseMessage.SUCCESS,authenticatedUser)
     } catch (err) {
         httpError(next, err, req, 500)
     }

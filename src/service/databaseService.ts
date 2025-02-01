@@ -13,6 +13,7 @@ export default {
             throw err
         }
     },
+
     findUserByEmailAddress: (emailAddress: string, select: string = '') => {
         return userModel
             .findOne({
@@ -22,6 +23,9 @@ export default {
     },
     registerUser: (payload: IUser) => {
         return userModel.create(payload)
+    },
+    findUserById: (id: string, select: string = '') => {
+        return userModel.findById(id).select(select)
     },
 
     findUserByConfirmationTokenAndCode: (token: string, code: string) => {

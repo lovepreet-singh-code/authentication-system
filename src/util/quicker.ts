@@ -76,6 +76,10 @@ export default {
             expiresIn: expiry
         })
     },
+    verifyToken: (token: string, secret: string) => {
+        return jwt.verify(token, secret)
+    },
+
     getDomainFromUrl: (url: string) => {
         try {
             const parsedUrl = new URL(url)
