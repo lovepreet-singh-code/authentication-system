@@ -51,7 +51,12 @@ export interface IRegisterUserRequestBody {
     password: string
     consent: boolean
 }
-
+export interface IForgotPasswordRequestBody {
+    emailAddress: string
+}
+export interface IResetPasswordRequestBody {
+    newPassword: string
+}
 export interface ILoginUserRequestBody {
     emailAddress: string
     password: string

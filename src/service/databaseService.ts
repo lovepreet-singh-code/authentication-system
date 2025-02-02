@@ -34,9 +34,21 @@ export default {
             'accountConfirmation.code': code
         })
     },
+    findUserByResetToken: (token: string) => {
+        return userModel.findOne({
+            'passwordReset.token': token
+        })
+    },
+
     createRefreshToken: (payload: IRefreshToken) => {
         return refreshTokenModel.create(payload)
     },
+    deleteRefreshToken: (token: string) => {
+        return refreshTokenModel.deleteOne({ token: token })
+    },
+    findRefreshToken: (token: string) => {
+        return refreshTokenModel.findOne({ token })
+    }
 }
 
 

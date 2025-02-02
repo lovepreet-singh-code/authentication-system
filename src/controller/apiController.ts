@@ -1,12 +1,20 @@
-///* eslint-disable @typescript-eslint/no-unsafe-assignment */
-
 import {  NextFunction, Request, Response } from 'express'
 import httpResponse from '../util/httpResponse'
 import responseMessage from '../constant/responseMessage'
 import httpError from '../util/httpError'
 import quicker from '../util/quicker'
-import { validateJoiSchema, ValidateLoginBody, ValidateRegisterBody } from '../service/validationService'
-import { ILoginUserRequestBody, IRefreshToken, IRegisterUserRequestBody, IUser } from '../types/userTypes'
+import { ValidateForgotPasswordBody,
+     validateJoiSchema,
+     ValidateLoginBody,
+     ValidateRegisterBody,
+     ValidateResetPasswordBody } from '../service/validationService'
+import { IDecryptedJwt,
+     IForgotPasswordRequestBody, 
+     ILoginUserRequestBody, 
+     IRefreshToken,
+     IRegisterUserRequestBody,
+     IResetPasswordRequestBody,
+     IUser } from '../types/userTypes'
 import databaseService from '../service/databaseService'
 import { EUserRole } from '../constant/userConstant'
 import emailService from '../service/emailService'
@@ -29,6 +37,13 @@ interface IConfirmRequest extends Request {
         code: string
     }
 }
+interface IResetPasswordRequest extends Request {
+    params: {
+        token: string
+    }
+    body: IResetPasswordRequestBody
+}
+
 interface ILoginRequest extends Request {
     body: ILoginUserRequestBody
 }
@@ -36,6 +51,10 @@ interface ILoginRequest extends Request {
 interface ISelfIdentificationRequest extends Request {
     authenticatedUser: IUser
 }
+interface IForgotPasswordRequest extends Request {
+    body: IForgotPasswordRequestBody
+}
+
 
 
 
@@ -142,12 +161,10 @@ register: async (req: Request, res: Response, next: NextFunction) => {
            const subject = 'Confirm Your Account'
            const text = `Hey ${name}, Please confirm your account by clicking on the link below\n\n${confirmationUrl}`
 
-           emailService.sendEmail(to, subject, text).catch((err) => {
-               logger.error(`EMAIL_SERVICE`, {
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                  meta: err
-              })
-         })
+        emailService.sendEmail(to, subject, text).catch((err: unknown) => {
+            const errorMeta = err instanceof Error ? { message: err.message, stack: err.stack } : { meta: err };
+            logger.error(`EMAIL_SERVICE`, errorMeta);
+        });
 
    // Send Response
    httpResponse(req, res, 201, responseMessage.SUCCESS, { _id: newUser._id })
@@ -186,13 +203,10 @@ confirmation: async (req: Request, res: Response, next: NextFunction) => {
           const subject = 'Account Confirmed'
           const text = `Your account has been confirmed`
 
-          emailService.sendEmail(to, subject, text).catch((err) => {
-              logger.error(`EMAIL_SERVICE`, {
-                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                  meta: err
-              })
-          })
-          
+        emailService.sendEmail(to, subject, text).catch((err: unknown) => {
+            const errorMeta = err instanceof Error ? { message: err.message, stack: err.stack } : { meta: err };
+            logger.error(`EMAIL_SERVICE`, errorMeta);
+        });
 
         httpResponse(req, res, 200, responseMessage.SUCCESS)
     } catch (err) {
@@ -293,5 +307,223 @@ selfIdentification: (req: Request, res: Response, next: NextFunction) => {
     } catch (err) {
         httpError(next, err, req, 500)
     }
+},
+logout: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { cookies } = req 
+        const {refreshToken} = cookies as {
+            refreshToken: string | undefined
+        }
+        if (refreshToken) {
+            // db -> delete the refresh token
+            await databaseService.deleteRefreshToken(refreshToken)
+        }
+        const DOMAIN = quicker.getDomainFromUrl(config.SERVER_URL as string)
+
+        // Cookies clear
+        res.clearCookie('accessToken', {
+            path: '/api/v1',
+            domain: DOMAIN,
+            sameSite: 'strict',
+            maxAge: 1000 * config.ACCESS_TOKEN.EXPIRY,
+            httpOnly: true,
+            secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+        })
+
+        res.clearCookie('refreshToken', {
+            path: '/api/v1',
+            domain: DOMAIN,
+            sameSite: 'strict',
+            maxAge: 1000 * config.REFRESH_TOKEN.EXPIRY,
+            httpOnly: true,
+            secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+        })
+
+        httpResponse(req, res, 200, responseMessage.SUCCESS)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+},
+refreshToken: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { cookies } = req;
+
+        const { refreshToken, accessToken } = cookies as {
+            refreshToken: string | undefined;
+            accessToken: string | undefined;
+        };
+
+        if (accessToken) {
+            return httpResponse(req, res, 200, responseMessage.SUCCESS, {
+                accessToken
+            });
+        }
+
+        if (refreshToken) {
+            // fetch token from db
+            const rft = await databaseService.findRefreshToken(refreshToken);
+            if (rft) {
+                const DOMAIN = quicker.getDomainFromUrl(config.SERVER_URL as string);
+
+                let userId: null | string = null;
+
+                try {
+                    const decryptedJwt = quicker.verifyToken(refreshToken, config.REFRESH_TOKEN.SECRET as string) as IDecryptedJwt;
+                    userId = decryptedJwt.userId;
+                } catch (err) {
+                    userId = null;
+                    logger.error('REFRESH_TOKEN_VERIFICATION', {
+                        message: err instanceof Error ? err.message : 'Unknown error',
+                        stack: err instanceof Error ? err.stack : null
+                    });
+                }
+
+                if (userId) {
+                    // * Access Token
+                    const accessToken = quicker.generateToken(
+                        {
+                            userId: userId
+                        },
+                        config.ACCESS_TOKEN.SECRET as string,
+                        config.ACCESS_TOKEN.EXPIRY
+                    );
+
+                    // Generate new Access Token
+                    res.cookie('accessToken', accessToken, {
+                        path: '/api/v1',
+                        domain: DOMAIN,
+                        sameSite: 'strict',
+                        maxAge: 1000 * config.ACCESS_TOKEN.EXPIRY,
+                        httpOnly: true,
+                        secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+                    });
+
+                    return httpResponse(req, res, 200, responseMessage.SUCCESS, {
+                        accessToken
+                    });
+                }
+            }
+        }
+
+        httpError(next, new Error(responseMessage.UNAUTHORIZED), req, 401)
+        httpResponse(req, res, 200, responseMessage.SUCCESS)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+},
+
+forgotPassword: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+         // Todo:
+            // 1. Parsing Body
+            const { body } = req as IForgotPasswordRequest;
+
+            // 2. Validate Body
+            const { error, value } = validateJoiSchema<IForgotPasswordRequestBody>(ValidateForgotPasswordBody, body);
+            if (error) {
+                return httpError(next, error, req, 422);
+            }
+
+            const { emailAddress } = value;
+
+            // 3. Find User by Email Address
+            const user = await databaseService.findUserByEmailAddress(emailAddress);
+            if (!user) {
+                return httpError(next, new Error(responseMessage.NOT_FOUND('user')), req, 404);
+            }
+
+            // 4. Check if user account is confirmed
+            if (!user.accountConfirmation.status) {
+                return httpError(next, new Error(responseMessage.ACCOUNT_CONFIRMATION_REQUIRED), req, 400);
+            }
+
+              // 5. Password Reset token & expiry
+              const token = quicker.generateRandomId();
+              const expiry = quicker.generateResetPasswordExpiry(15);
+  
+              // 6. Update User
+              user.passwordReset.token = token;
+              user.passwordReset.expiry = expiry;
+  
+              await user.save();
+  
+               // 7. Send Email
+            const resetUrl = `${config.FRONTEND_URL}/reset-password/${token}`;
+            const to = [emailAddress];
+            const subject = 'Account Password Reset Requested';
+            const text = `Hey ${user.name}, Please reset your account password by clicking on the link below\n\nLink will expire within 15 Minutes\n\n${resetUrl}`;
+
+            emailService.sendEmail(to, subject, text).catch((err: unknown) => {
+                const errorMeta = err instanceof Error ? { message: err.message, stack: err.stack } : { meta: err };
+                logger.error(`EMAIL_SERVICE`, errorMeta);
+            });
+
+        httpResponse(req, res, 200, responseMessage.SUCCESS);
+    } catch (err) {
+        httpError(next, err, req, 500);
+    }
+},
+resetPassword: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+         // Todo
+            // * Body Parsing & Validation
+            const { body, params } = req as IResetPasswordRequest
+
+            const { token } = params
+            const { error, value } = validateJoiSchema<IResetPasswordRequestBody>(ValidateResetPasswordBody, body)
+            if (error) {
+                return httpError(next, error, req, 422)
+            }
+
+            const { newPassword } = value
+           
+            // * Fetch user by token
+            const user = await databaseService.findUserByResetToken(token)
+            if (!user) {
+                return httpError(next, new Error(responseMessage.NOT_FOUND('user')), req, 404)
+            }
+             // * Check if user account is confirmed
+             if (!user.accountConfirmation.status) {
+                return httpError(next, new Error(responseMessage.ACCOUNT_CONFIRMATION_REQUIRED), req, 400)
+            }
+
+                // * Check expiry of the url
+                const storedExpiry = user.passwordReset.expiry
+                const currentTimestamp = dayjs().valueOf()
+
+                if (!storedExpiry) {
+                    return httpError(next, new Error(responseMessage.INVALID_REQUEST), req, 400)
+                }
+    
+                if (currentTimestamp > storedExpiry) {
+                    return httpError(next, new Error(responseMessage.EXPIRED_URL), req, 400)
+                }
+
+                    // * Hash new password
+            const hashedPassword = await quicker.hashPassword(newPassword)
+
+                 // * User update
+            user.password = hashedPassword
+
+            user.passwordReset.token = null
+            user.passwordReset.expiry = null
+            user.passwordReset.lastResetAt = dayjs().utc().toDate()
+            await user.save()
+
+            // * Email send
+            const to = [user.emailAddress]
+            const subject = 'Account Password Reset'
+            const text = `Hey ${user.name}, You account password has been reset successfully.`
+
+            emailService.sendEmail(to, subject, text).catch((err: unknown) => {
+                const errorMeta = err instanceof Error ? { message: err.message, stack: err.stack } : { meta: err };
+                logger.error(`EMAIL_SERVICE`, errorMeta);
+            });
+
+        httpResponse(req, res, 200, responseMessage.SUCCESS)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
 }
+
 }
