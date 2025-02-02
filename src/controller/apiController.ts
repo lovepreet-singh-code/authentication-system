@@ -6,7 +6,7 @@ import responseMessage from '../constant/responseMessage'
 import httpError from '../util/httpError'
 import quicker from '../util/quicker'
 import { validateJoiSchema, ValidateLoginBody, ValidateRegisterBody } from '../service/validationService'
-import { ILoginUserRequestBody, IRefreshToken, IRegisterUserRequestBody, IUser } from '../types/userTypes'
+import { IDecryptedJwt, ILoginUserRequestBody, IRefreshToken, IRegisterUserRequestBody, IUser } from '../types/userTypes'
 import databaseService from '../service/databaseService'
 import { EUserRole } from '../constant/userConstant'
 import emailService from '../service/emailService'
@@ -290,6 +290,106 @@ selfIdentification: (req: Request, res: Response, next: NextFunction) => {
     try {
         const { authenticatedUser } = req as ISelfIdentificationRequest
         httpResponse(req, res, 200, responseMessage.SUCCESS,authenticatedUser)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+},
+logout: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { cookies } = req 
+        const {refreshToken} = cookies as {
+            refreshToken: string | undefined
+        }
+        if (refreshToken) {
+            // db -> delete the refresh token
+            await databaseService.deleteRefreshToken(refreshToken)
+        }
+        const DOMAIN = quicker.getDomainFromUrl(config.SERVER_URL as string)
+
+        // Cookies clear
+        res.clearCookie('accessToken', {
+            path: '/api/v1',
+            domain: DOMAIN,
+            sameSite: 'strict',
+            maxAge: 1000 * config.ACCESS_TOKEN.EXPIRY,
+            httpOnly: true,
+            secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+        })
+
+        res.clearCookie('refreshToken', {
+            path: '/api/v1',
+            domain: DOMAIN,
+            sameSite: 'strict',
+            maxAge: 1000 * config.REFRESH_TOKEN.EXPIRY,
+            httpOnly: true,
+            secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+        })
+
+        httpResponse(req, res, 200, responseMessage.SUCCESS)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+},
+refreshToken: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { cookies } = req
+
+        const { refreshToken, accessToken } = cookies as {
+            refreshToken: string | undefined
+            accessToken: string | undefined
+        }
+
+        if (accessToken) {
+            return httpResponse(req, res, 200, responseMessage.SUCCESS, {
+                accessToken
+            })
+        }
+
+        if (refreshToken) {
+            // fetch token from db
+            const rft = await databaseService.findRefreshToken(refreshToken)
+            if (rft) {
+                const DOMAIN = quicker.getDomainFromUrl(config.SERVER_URL as string)
+
+                let userId: null | string = null
+
+                try {
+                    const decryptedJwt = quicker.verifyToken(refreshToken, config.REFRESH_TOKEN.SECRET as string) as IDecryptedJwt
+                    userId = decryptedJwt.userId
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                } catch (err) {
+                    userId = null
+                }
+
+                if (userId) {
+                    // * Access Token
+                    const accessToken = quicker.generateToken(
+                        {
+                            userId: userId
+                        },
+                        config.ACCESS_TOKEN.SECRET as string,
+                        config.ACCESS_TOKEN.EXPIRY
+                    )
+                      
+                    // Generate new Access Token
+                    res.cookie('accessToken', accessToken, {
+                        path: '/api/v1',
+                        domain: DOMAIN,
+                        sameSite: 'strict',
+                        maxAge: 1000 * config.ACCESS_TOKEN.EXPIRY,
+                        httpOnly: true,
+                        secure: !(config.ENV === EApplicationEnvironment.DEVELOPMENT)
+                    })
+
+                    return httpResponse(req, res, 200, responseMessage.SUCCESS, {
+                        accessToken
+                    })
+                }
+            }
+        }
+
+        httpError(next, new Error(responseMessage.UNAUTHORIZED), req, 401)
+        httpResponse(req, res, 200, responseMessage.SUCCESS)
     } catch (err) {
         httpError(next, err, req, 500)
     }
