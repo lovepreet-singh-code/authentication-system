@@ -26,4 +26,8 @@ router.route('/reset-password/:token').put(rateLimit, apiController.resetPasswor
 
 router.route('/change-password').put(authentication, apiController.changePassword)
 
+router.route('/reset-password/:token').put( apiController.resetPassword)
+
+router.route('/change-password').put(authentication, apiController.changePassword)
+
 export default router
