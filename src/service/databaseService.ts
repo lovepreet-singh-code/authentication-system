@@ -13,7 +13,6 @@ export default {
             throw err
         }
     },
-
     findUserByEmailAddress: (emailAddress: string, select: string = '') => {
         return userModel
             .findOne({
@@ -27,11 +26,15 @@ export default {
     findUserById: (id: string, select: string = '') => {
         return userModel.findById(id).select(select)
     },
-
     findUserByConfirmationTokenAndCode: (token: string, code: string) => {
         return userModel.findOne({
             'accountConfirmation.token': token,
             'accountConfirmation.code': code
+        })
+    },
+    findUserByResetToken: (token: string) => {
+        return userModel.findOne({
+            'passwordReset.token': token
         })
     },
     createRefreshToken: (payload: IRefreshToken) => {
@@ -42,12 +45,5 @@ export default {
     },
     findRefreshToken: (token: string) => {
         return refreshTokenModel.findOne({ token })
-    },
-    findUserByResetToken: (token: string) => {
-        return userModel.findOne({
-            'passwordReset.token': token
-        })
-    },
+    }
 }
-
-

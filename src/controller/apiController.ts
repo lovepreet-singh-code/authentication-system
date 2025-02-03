@@ -5,18 +5,19 @@ import httpResponse from '../util/httpResponse'
 import responseMessage from '../constant/responseMessage'
 import httpError from '../util/httpError'
 import quicker from '../util/quicker'
-import { ValidateForgotPasswordBody,
+import { ValidateChangePasswordBody, ValidateForgotPasswordBody,
      validateJoiSchema,
      ValidateLoginBody, 
      ValidateRegisterBody, 
      ValidateResetPasswordBody} from '../service/validationService'
-import { IDecryptedJwt,
+import { IChangePasswordRequestBody, IDecryptedJwt,
      IForgotPasswordRequestBody,
      ILoginUserRequestBody,
       IRefreshToken, 
       IRegisterUserRequestBody,
        IResetPasswordRequestBody,
-       IUser } from '../types/userTypes'
+       IUser, 
+       IUserWithId} from '../types/userTypes'
 import databaseService from '../service/databaseService'
 import { EUserRole } from '../constant/userConstant'
 import emailService from '../service/emailService'
@@ -55,7 +56,10 @@ interface IResetPasswordRequest extends Request {
     }
     body: IResetPasswordRequestBody
 }
-
+interface IChangePasswordRequest extends Request {
+    authenticatedUser: IUserWithId
+    body: IChangePasswordRequestBody
+}
 
 export default {
     self: (req: Request, res: Response, next: NextFunction) => {
@@ -530,4 +534,57 @@ resetPassword: async (req: Request, res: Response, next: NextFunction) => {
         httpError(next, err, req, 500)
     }
 },
+changePassword: async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        // Todo
+        // * Body Parsing & Validation
+        const { body, authenticatedUser } = req as IChangePasswordRequest
+
+        const { error, value } = validateJoiSchema<IChangePasswordRequestBody>(ValidateChangePasswordBody, body)
+        if (error) {
+            return httpError(next, error, req, 422)
+        }
+
+        // * Find User by id
+        const user = await databaseService.findUserById(authenticatedUser._id, '+password')
+        if (!user) {
+            return httpError(next, new Error(responseMessage.NOT_FOUND('user')), req, 404)
+        }
+
+        const { newPassword, oldPassword } = value
+
+        // * Check if old password is matching with stored password
+        const isPasswordMatching = await quicker.comparePassword(oldPassword, user.password)
+        if (!isPasswordMatching) {
+            return httpError(next, new Error(responseMessage.INVALID_OLD_PASSWORD), req, 400)
+        }
+
+        if (newPassword === oldPassword) {
+            return httpError(next, new Error(responseMessage.PASSWORD_MATCHING_WITH_OLD_PASSWORD), req, 400)
+        }
+
+        // * Password hash for new password
+        const hashedPassword = await quicker.hashPassword(newPassword)
+
+        // * User update
+        user.password = hashedPassword
+        await user.save()
+
+        // * Email Send
+        const to = [user.emailAddress]
+        const subject = 'Password Changed'
+        const text = `Hey ${user.name}, You account password has been changed successfully.`
+
+        emailService.sendEmail(to, subject, text).catch((err) => {
+            logger.error(`EMAIL_SERVICE`, {
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                meta: err
+            })
+        })
+
+        httpResponse(req, res, 200, responseMessage.SUCCESS)
+    } catch (err) {
+        httpError(next, err, req, 500)
+    }
+}
 }

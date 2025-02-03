@@ -61,3 +61,8 @@ export interface ILoginUserRequestBody {
     emailAddress: string
     password: string
 }
+export interface IChangePasswordRequestBody {
+    oldPassword: string
+    newPassword: string
+    confirmNewPassword: string
+}
